@@ -7,12 +7,13 @@ import glob
 import cv2
 import scipy
 
-def ct_to_sagital(path,id):
+def dicom_files_to_list(path,id):
     files = []
     folder = os.listdir(path + '/' + id)
-    files_name_list = glob.glob(path + '/' + id + '/' + folder[0] + '/' + '*.dcm', recursive=False)
-
-    #files_name_list = glob.glob(path + '/' + id +  '/' + '*.dcm', recursive=False)
+    if any(os.path.isdir(os.path.join(path, id, item)) for item in folder):
+        files_name_list = glob.glob(path + '/' + id + '/' + folder[0] + '/' + '*.dcm', recursive=False)
+    else:
+        files_name_list = glob.glob(path + '/' + id +  '/' + '*.dcm', recursive=False)
 
     for fname in files_name_list:
         files.append(pydicom.dcmread(fname))
@@ -29,20 +30,22 @@ def ct_to_sagital(path,id):
     # ensure they are in the correct order
     slices = sorted(slices, key=lambda s: s.InstanceNumber)
     slices.pop()
+    slices_by_value = {}
+    for item in slices:
+        value = item[0x0020, 0x0011].value
+        if value not in slices_by_value:
+            slices_by_value[value] = []
+        slices_by_value[value].append(item)
+    r_slices = max(slices_by_value.values(), key=len)
+    return r_slices
 
-    #nslices = []
-    #for i in slices:
-        #if i[0x0020, 0x0011].value ==  '10017' : #Series Number
-           # nslices.append(i)
-    #slices = nslices
-    #id += 'A'
-
+def slices_to_3d(slices):
     # pixel aspects, assuming all slices are the same
     ps = 0
     ss = 0
     for i in slices:
         if hasattr(i, "PixelSpacing"):
-            if i.PixelSpacing != [0,0]:
+            if i.PixelSpacing != [0, 0]:
                 ps = i.PixelSpacing
                 break
     for i in slices:
@@ -55,59 +58,62 @@ def ct_to_sagital(path,id):
     ax_aspect = ps[1]/ps[0]
     sag_aspect = ps[1]/ss
     cor_aspect = ss/ps[0]
-# create 3D array
+
+    # create 3D array
     img_shape = 0
+
     for i in slices:
         if len(i.pixel_array.shape) == 2:
             img_shape = list(i.pixel_array.shape)
             break
 
     img_shape.append(len(slices))
-    img3d = np.zeros(img_shape)
+    img3d = np.zeros(img_shape,dtype=np.float32)
 
-# fill 3D array with the images from the files
+    # fill 3D array with the images from the files
     for i, s in enumerate(slices):
         img2d = s.pixel_array
-        if np.ndim(img2d) == 2:
+        img2d = img2d + s.RescaleIntercept
+        if s.RescaleIntercept != 0:  ### if need normalization
+            print("RescaleIntercept")
+            img3d[:, :, i] = img2d - s.RescaleIntercept
+        elif np.ndim(img2d) == 2:
             img3d[:, :, i] = img2d
+    return img3d
+def ct_to_sagital(path,id):
 
-    w_center = 0
-    w_width = 0
-    for i in slices:
-        if i[0x0028, 0x1050].value != 128:
-            w_center = i[0x0028, 0x1050].value
-            break
+    slices = dicom_files_to_list(path,id)
+    img3d = slices_to_3d(slices)
 
-    for i in slices:
-        if i[0x0028, 0x1051].value != 255:  
-            w_width = i[0x0028, 0x1051].value
-            break
-
-    img3d = dicom_grayscale_normaliztaion(img3d, w_center, w_width)
+    img3d = dicom_grayscale_normaliztaion(img3d, slices)
 
 
-    ax_image = img3d[:, :, 3 * img_shape[2] // 10]
-    hist = np.histogram(ax_image,bins=256)
+    ax_image = img3d[:, :, 3 * img3d.shape[2] // 10]
     s = 0
-    for i in range(255):
+    hist = np.histogram(ax_image,bins=256,range=(0,256))
+    for i in range(256):
         s += hist[0][255 - i]
-        if s/hist[0][0] > 0.15:
+        if s > hist[0][0]*0.1:
             s = 255 - i
             break
-
-
     ax_mask = ax_image > s
     ax_image = ax_mask * ax_image
 
     try:
-        os.makedirs('C:/Users/User/PycharmProjects/pythonProject1/output/' + id)
+        os.makedirs('C:/Users/User/PycharmProjects/pythonProject1/output/' + id + 'new')
     except:
         pass
 
-    os.chdir('C:/Users/User/PycharmProjects/pythonProject1/output/' + id)
+    os.chdir('C:/Users/User/PycharmProjects/pythonProject1/output/' + id + 'new')
 
-    cv2.imwrite(id + '_ax_3.bmp', img3d[:, :, 3 * img_shape[2] // 10])
-    cv2.imwrite(id + '_ax_mask.bmp', ax_image)
+    for i in range(img3d.shape[1]):
+        cv2.imwrite(str(i) + ".jpg", np.rot90(img3d[:, i, :])) #sagittal
+        #cv2.imwrite(str(i) + ".jpg", np.rot90(img3d[:, :, i])) #axial
+
+    return 0
+
+    cv2.imwrite(id + '_ax_3.jpg', img3d[:, :, 3 * img_shape[2] // 10])
+    cv2.imwrite(id + '_ax_mask.jpg', ax_image)
     
     #jaw_lines(id+'_ax_3')
     r1, r2, l1, l2 = jaw_lines(id + '_ax_mask')
@@ -119,16 +125,16 @@ def ct_to_sagital(path,id):
     array_rotated_right = np.rint(scipy.ndimage.rotate(img3d, angle=- (90 - theta1), axes=(1, 0))).astype(int)
     array_rotated_left = np.rint(scipy.ndimage.rotate(img3d, angle=90 + theta2, axes=(1, 0))).astype(int)
 
-    lines = cv2.imread(id + '_ax_maskonly_lines.bmp')
+    lines = cv2.imread(id + '_ax_maskonly_lines.jpg')
     line_rotated_right = np.rint(scipy.ndimage.rotate(lines, angle=-(90 - theta1), axes=(1, 0))).astype(int)
     line_rotated_left = np.rint(scipy.ndimage.rotate(lines, angle=90 + theta2, axes=(1, 0))).astype(int)
-    cv2.imwrite(id + 'lines_roteted_right.bmp',line_rotated_right)
-    cv2.imwrite(id + 'lines_roteted_left.bmp', line_rotated_left)
+    cv2.imwrite(id + 'lines_roteted_right.jpg',line_rotated_right)
+    cv2.imwrite(id + 'lines_roteted_left.jpg', line_rotated_left)
 
     ax_mask_rotated_right = np.rint(scipy.ndimage.rotate(ax_image, angle=-(90 - theta1), axes=(1, 0))).astype(int)
     ax_mask_rotated_left = np.rint(scipy.ndimage.rotate(ax_image, angle=90 + theta2, axes=(1, 0))).astype(int)
-    cv2.imwrite(id + 'ax_roteted_right.bmp',ax_mask_rotated_right)
-    cv2.imwrite(id + 'ax_roteted_left.bmp', ax_mask_rotated_left)
+    cv2.imwrite(id + 'ax_roteted_right.jpg',ax_mask_rotated_right)
+    cv2.imwrite(id + 'ax_roteted_left.jpg', ax_mask_rotated_left)
 
     right = 0
 
@@ -161,7 +167,7 @@ def ct_to_sagital(path,id):
 
     for i in range(array_rotated_right.shape[1]):
         if i >= (min_right - 10) and i <= (max_right + 10):
-            cv2.imwrite("r" + str(i) + ".bmp", np.rot90(array_rotated_right[:, i, :]))
+            cv2.imwrite("r" + str(i) + ".jpg", np.rot90(array_rotated_right[:, i, :]))
 
     left = 0
 
@@ -194,30 +200,45 @@ def ct_to_sagital(path,id):
 
     for i in range(array_rotated_left.shape[1]):
         if i >= (min_left - 10) and i <= (max_left + 10):
-            cv2.imwrite("l" + str(i) + ".bmp", np.rot90(array_rotated_left[:, i, :]))
+            cv2.imwrite("l" + str(i) + ".jpg", np.rot90(array_rotated_left[:, i, :]))
     print(min_right, ",  ", right, ',  ',max_right)
 
-def dicom_grayscale_normaliztaion(img3d,w_center,w_width):
+def dicom_grayscale_normaliztaion(img3d,slices):
+    w_center = 0
+    w_width = 0
+    for i in slices:
+        if i[0x0028, 0x1050].value != 128:
+            w_center = i[0x0028, 0x1050].value
+            break
+    for i in slices:
+        if i[0x0028, 0x1051].value != 255:
+            w_width = i[0x0028, 0x1051].value
+            break
+    del slices
+    mask_minimum = img3d > (w_center - w_width/2)
+    mask_max = img3d < (w_center + w_width/2)
+    max_values = (~mask_max) * 256
+    #nimg = (w_width - (w_center + w_width / 2 - img3d)) * 256/w_width
 
-   mask_minimum = img3d > (w_center - w_width/2)
-   mask_max = img3d < (w_center + w_width/2)
-   max_values = (~mask_max) * 256
-   #nimg = (w_width - (w_center + w_width / 2 - img3d)) * 256/w_width
+    nimg = w_width
 
-   nimg = w_width
+    nimg -= w_center + w_width / 2 - img3d
 
-   nimg -= w_center + w_width / 2 - img3d
+    nimg *= 256/w_width
 
-   nimg *= 256/w_width
+    nimg = nimg * mask_minimum
+    del mask_minimum
+    nimg = nimg * mask_max
+    del mask_max
 
-   nimg = nimg * mask_minimum
-   nimg = nimg * mask_max
-   nimg = nimg +max_values
+    nimg = nimg +max_values
+    del max_values
 
-   return nimg
+
+    return nimg
 
 def jaw_lines(image_name):
-    cv_im_ax = cv2.imread(image_name + '.bmp')
+    cv_im_ax = cv2.imread(image_name + '.jpg')
 
     gray = cv2.cvtColor(cv_im_ax, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(cv_im_ax, 50, 150, apertureSize=3)
@@ -296,60 +317,83 @@ def jaw_lines(image_name):
 
     os.chdir('C:/Users/User/PycharmProjects/pythonProject1/output/' + image_name[:image_name.index('_')]  )
 
-    cv2.imwrite(image_name +'lines.bmp', cv_im_ax)
+    cv2.imwrite(image_name +'lines.jpg', cv_im_ax)
 
     im_lines = np.zeros(cv_im_ax.shape)
 
     cv2.line(im_lines, i_mr[0], i_mr[1], (0, 0, 255), 2)
     cv2.line(im_lines, i_ml[0], i_ml[1], (0, 0, 255), 2)
-    cv2.imwrite(image_name +'only_lines.bmp', im_lines)
+    cv2.imwrite(image_name +'only_lines.jpg', im_lines)
 
     return i_mr[0], i_mr[1] , i_ml[0], i_ml[1]
 
+
 def main():
     path_local = 'C:/Users/User/PycharmProjects/pythonProject1/ct files'
-
-    #img3d = np.ones([10,10,10])
-    #for i in range(img3d.shape[1]):
-     #   for j in range(img3d.shape[1]):
-      #      img3d[9][i][j] = 0
-    #array_rotated = scipy.ndimage.rotate(img3d, angle=30, axes=(2, 1))
-    #a= 5
-    #
-
-
-    #jaw_lines('92_ax_3')
-
-
-    #jaw_lines('1637_ax_3')
-    #jaw_lines('476_ax_3')
-    #jaw_lines('1744_ax_3')
-
-
-    #ct_to_sagital(path_local,'10204')
-    #ct_to_sagital(path_local,'92')
-    #ct_to_sagital(path_local,'476')
-    #ct_to_sagital(path_local,'1744')
-    #ct_to_sagital(path_local, '3162')
     os.chdir('C:/Users/User/PycharmProjects/pythonProject1/ax_images/')
+    # ct_to_sagital(path_local,'10204')
+    # ct_to_sagital(path_local,'10623')
+    # ct_to_sagital(path_local, '11078')
+    # ct_to_sagital(path_local, '11281')
+    # ct_to_sagital(path_local, '11936')
+    # ct_to_sagital(path_local, '12019')
+    # ct_to_sagital(path_local, '12812')
+    # ct_to_sagital(path_local, '12987')
+    # ct_to_sagital(path_local, '13011')
+    # ct_to_sagital(path_local, '13605')
+    # ct_to_sagital(path_local, '14320')
+    # ct_to_sagital(path_local, '14682')
+    # ct_to_sagital(path_local, '14813')
+    # ct_to_sagital(path_local, '15270')
+    # ct_to_sagital(path_local, '15349')
+    # ct_to_sagital(path_local, '15959')
+    # ct_to_sagital(path_local, '16028')
+    # ct_to_sagital(path_local, '1637')
+    # ct_to_sagital(path_local, '16437')
+    # ct_to_sagital(path_local, '16884')
+    # ct_to_sagital(path_local, '16916')
+    # ct_to_sagital(path_local, '17436')
+    ## ct_to_sagital(path_local, '1744')
+    # ct_to_sagital(path_local, '17442')
+    # ct_to_sagital(path_local, '18308')
+    # ct_to_sagital(path_local, '18716')
+    # ct_to_sagital(path_local, '19242')
+    # ct_to_sagital(path_local, '19890')
+    # ct_to_sagital(path_local, '20016')
+    # ct_to_sagital(path_local, '20669')
+    # ct_to_sagital(path_local, '20687')
+    # ct_to_sagital(path_local, '21848')
+    # ct_to_sagital(path_local, '22962')
+    # ct_to_sagital(path_local, '2459')
+    # ct_to_sagital(path_local, '2663')
+    # ct_to_sagital(path_local, '2767')
+    # ct_to_sagital(path_local, '29005') ###
+    # ct_to_sagital(path_local, '30964')
+    ##ct_to_sagital(path_local, '3162')
+    # ct_to_sagital(path_local, '32671')
+    # ct_to_sagital(path_local, '4233')
+    # ct_to_sagital(path_local, '476')
+    # ct_to_sagital(path_local, '5124')
+    # ct_to_sagital(path_local, '6277')
+    # ct_to_sagital(path_local, '703')
+    # ct_to_sagital(path_local, '7087')
+    # ct_to_sagital(path_local, '8008')
+    # ct_to_sagital(path_local, '8713')
+    # ct_to_sagital(path_local, '92')
+    # ct_to_sagital(path_local, '9673')
+    #ct_to_sagital(path_local, '11281')
 
-    #lines = cv2.imread('10204' + '_ax_maskonly_lines.bmp')
-    #line_rotated_right = np.rint(scipy.ndimage.rotate(lines[:][:][1], angle=90 - 45, axes=(1, 0))).astype(int)
-   # cv2.imwrite('10204' + 'lines_roteted_right.bmp', line_rotated_right)
-    #ct_to_sagital(path_local,'10204')
-    ct_to_sagital(path_local,'10623')
 
-    a  = os.listdir(path_local)
-    for i in os.listdir(path_local):
-        if i[0:2] > '10':
-            ct_to_sagital(path_local, i)
-            break
-##3162 9673
+    #for i in os.listdir(path_local):
+     #   if i[0:2] > '10':
+      #      ct_to_sagital(path_local, i)
+       #     break
+
     ##ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '13527')
-   # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '18486')
+    ##ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '18486')
     #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '20963')
-    #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '21347')
-    #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '22467')
+    ##ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '21347')
+    ##ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '22467')
     #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '22596')
     #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '22637')
     #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '24065')
@@ -359,6 +403,43 @@ def main():
     #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '27934')
     ##ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', '28271')
 
+    # ct_to_sagital(path_local, 'R1')
+    # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-19465')
+    # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-20379')
+    # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-1989')
+    # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-3132')
+    # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-3798')
+    # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-18286')
+
+    # ct_to_sagital(path_local, '2959') 10032
+    # ct_to_sagital(path_local, '7096')
+    # ct_to_sagital(path_local, '8233')
+
+    #ct_to_sagital(path_local, '3889')
+    #ct_to_sagital(path_local, '5685')
+    #ct_to_sagital(path_local, '8771')
+    #ct_to_sagital(path_local, '10283')
+    #ct_to_sagital(path_local, '11465')
+    #ct_to_sagital(path_local, '15188')
+    #ct_to_sagital(path_local, '16233')
+    #ct_to_sagital(path_local, '17216')
+    #ct_to_sagital(path_local, '19182')
+    #ct_to_sagital(path_local, '20397')
+    #ct_to_sagital(path_local, '32699')
+    #ct_to_sagital(path_local, '828')
+    #ct_to_sagital(path_local, '3098')
+
+    #ct_to_sagital(path_local, '1763455062322')
+    #ct_to_sagital(path_local, 'AR001')
+    ##ct_to_sagital(path_local, '629796118369')
+    #ct_to_sagital(path_local, '2723242683249A')
+    #ct_to_sagital(path_local, '2723242683249B')
+
+    #ct_to_sagital(path_local, '1763455062322A')
+    ct_to_sagital(path_local, '1763455062322B')
+
+
+    #ct_to_sagital(path_local, '4023688728466')
 
 
 if __name__ == "__main__":
