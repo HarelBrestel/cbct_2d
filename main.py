@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 import glob
 import cv2
 import scipy
+from scipy.interpolate import interp1d
+from scipy.ndimage import zoom
+from skimage.measure import block_reduce
+
 
 def dicom_files_to_list(path,id):
     files = []
@@ -55,10 +59,10 @@ def slices_to_3d(slices):
                 break
     print(id)
     print(ps, ss, "\n")
-    ax_aspect = ps[1]/ps[0]
-    sag_aspect = ps[1]/ss
-    cor_aspect = ss/ps[0]
-
+    #ax_aspect = ps[1]/ps[0]
+    #sag_aspect = ps[1]/ss
+    #cor_aspect = ss/ps[0]
+    scale = ss/ps[0]
     # create 3D array
     img_shape = 0
 
@@ -79,12 +83,25 @@ def slices_to_3d(slices):
             img3d[:, :, i] = img2d - s.RescaleIntercept
         elif np.ndim(img2d) == 2:
             img3d[:, :, i] = img2d
-    return img3d
+
+    return img3d ,scale
+
+    new_z = int(np.round(scale * img3d.shape[2]))  # New length for the z dimension, rounded to nearest integer
+    original_indices = np.linspace(0, img3d.shape[2] - 1, img3d.shape[2])
+    new_indices = np.linspace(0, img3d.shape[2] - 1, new_z)
+    stretched_array = np.empty((img3d.shape[0], img3d.shape[1], new_z))
+    for i in range(img3d.shape[0]):
+        for j in range(img3d.shape[1]):
+            # Use scipy's interp1d for linear interpolation along the third axis (z-axis)
+            interpolator = interp1d(original_indices, img3d[i, j, :], kind='linear', fill_value='extrapolate')
+            stretched_array[i, j, :] = interpolator(new_indices)
+    return stretched_array
+
 def ct_to_sagital(path,id):
 
     slices = dicom_files_to_list(path,id)
-    img3d = slices_to_3d(slices)
-
+    img3d, scale = slices_to_3d(slices)
+    #img3d = block_reduce(img3d, block_size=(2, 2, 2), func=np.mean)
     img3d = dicom_grayscale_normaliztaion(img3d, slices)
 
 
@@ -107,7 +124,9 @@ def ct_to_sagital(path,id):
     os.chdir('C:/Users/User/PycharmProjects/pythonProject1/output/' + id + 'new')
 
     for i in range(img3d.shape[1]):
-        cv2.imwrite(str(i) + ".jpg", np.rot90(img3d[:, i, :])) #sagittal
+        cv2.imwrite(str(i) + ".jpg", np.rot90(zoom(img3d[:, i, :],(1,scale),order=3))) #sagittal
+
+        #cv2.imwrite(str(i) + ".jpg", np.rot90(img3d[:, i, :])) #sagittal
         #cv2.imwrite(str(i) + ".jpg", np.rot90(img3d[:, :, i])) #axial
 
     return 0
@@ -217,6 +236,7 @@ def dicom_grayscale_normaliztaion(img3d,slices):
     del slices
     mask_minimum = img3d > (w_center - w_width/2)
     mask_max = img3d < (w_center + w_width/2)
+
     max_values = (~mask_max) * 256
     #nimg = (w_width - (w_center + w_width / 2 - img3d)) * 256/w_width
 
@@ -410,6 +430,8 @@ def main():
     # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-3132')
     # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-3798')
     # ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/drive', 'HMO-18286')
+    #ct_to_sagital('C:/Users/User/PycharmProjects/pythonProject1/ct files', 'HMO - 31181')
+
 
     # ct_to_sagital(path_local, '2959') 10032
     # ct_to_sagital(path_local, '7096')
@@ -429,14 +451,14 @@ def main():
     #ct_to_sagital(path_local, '828')
     #ct_to_sagital(path_local, '3098')
 
-    #ct_to_sagital(path_local, '1763455062322')
-    #ct_to_sagital(path_local, 'AR001')
-    ##ct_to_sagital(path_local, '629796118369')
+    ct_to_sagital(path_local, 'AR001')
+
+    #ct_to_sagital(path_local, '629796118369')
     #ct_to_sagital(path_local, '2723242683249A')
     #ct_to_sagital(path_local, '2723242683249B')
 
     #ct_to_sagital(path_local, '1763455062322A')
-    ct_to_sagital(path_local, '1763455062322B')
+    #ct_to_sagital(path_local, '1763455062322B')
 
 
     #ct_to_sagital(path_local, '4023688728466')
