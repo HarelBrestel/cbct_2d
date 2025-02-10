@@ -125,6 +125,7 @@ def ct_to_sagital(path,id):
 
     for i in range(img3d.shape[1]):
         cv2.imwrite(str(i) + ".jpg", np.rot90(zoom(img3d[:, i, :],(1,scale),order=3))) #sagittal
+        #cv2.imwrite(str(i) + ".jpg", np.rot90(zoom((img3d[:, i, :])[::-1],(1,scale),order=3))) #sagittal
 
         #cv2.imwrite(str(i) + ".jpg", np.rot90(img3d[:, i, :])) #sagittal
         #cv2.imwrite(str(i) + ".jpg", np.rot90(img3d[:, :, i])) #axial
@@ -237,7 +238,7 @@ def dicom_grayscale_normaliztaion(img3d,slices):
     mask_minimum = img3d > (w_center - w_width/2)
     mask_max = img3d < (w_center + w_width/2)
 
-    max_values = (~mask_max) * 256
+    max_values = (~mask_max) * 255
     #nimg = (w_width - (w_center + w_width / 2 - img3d)) * 256/w_width
 
     nimg = w_width
@@ -350,7 +351,7 @@ def jaw_lines(image_name):
 
 def main():
     path_local = 'C:/Users/User/PycharmProjects/pythonProject1/ct files'
-    os.chdir('C:/Users/User/PycharmProjects/pythonProject1/ax_images/')
+    #os.chdir('C:/Users/User/PycharmProjects/pythonProject1/ax_images/')
     # ct_to_sagital(path_local,'10204')
     # ct_to_sagital(path_local,'10623')
     # ct_to_sagital(path_local, '11078')
@@ -451,7 +452,7 @@ def main():
     #ct_to_sagital(path_local, '828')
     #ct_to_sagital(path_local, '3098')
 
-    ct_to_sagital(path_local, 'AR001')
+    #ct_to_sagital(path_local, 'AR001')
 
     #ct_to_sagital(path_local, '629796118369')
     #ct_to_sagital(path_local, '2723242683249A')
@@ -462,6 +463,17 @@ def main():
 
 
     #ct_to_sagital(path_local, '4023688728466')
+    #ct_to_sagital(path_local, 'FM002')
+    #ct_to_sagital(path_local, '7022-HMO')
+    #ct_to_sagital(path_local, 'SY003')
+    #ct_to_sagital(path_local, 'HMO_6572')
+    #ct_to_sagital(path_local, 'SB004')
+    ct_to_sagital(path_local, 'HMO-1296')
+    ct_to_sagital(path_local, 'HMO-11345')
+
+
+
+
 
 
 if __name__ == "__main__":
